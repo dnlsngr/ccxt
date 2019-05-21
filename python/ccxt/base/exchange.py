@@ -560,6 +560,7 @@ class Exchange(object):
     def parse_json(self, http_response):
         try:
             if Exchange.is_json_encoded_object(http_response):
+                http_response.trim()
                 return json.loads(http_response)
         except ValueError:  # superclass of JsonDecodeError (python2)
             pass

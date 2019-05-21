@@ -12,20 +12,18 @@ module.exports = class tuxexchange extends Exchange {
         return this.deepExtend (super.describe (), {
             'id': 'tuxexchange',
             'name': 'Tux Exchange',
-            'countries': ['CN'],
+            'countries': ['CA'],
             'version': '',
             'accounts': undefined,
             'accountsById': undefined,
             'hostname': 'tuxexchange.com/api',
             'has': {
-                'CORS': true, // Right? https://tuxexchange.com/api?method=getticker
+                'CORS': false,
                 'fetchCurrencies': true,
-                // 'fetchTradingLimits': true, // TODO: not documented, not responsive, might leave it out
-                'fetchTradingFee': true,
-                // 'fetchFundingLimits': true, // TODO: not documented, not responsive, might leave it out
-                'fetchTicker': true, // ALGO: I'm filtering fetchTickers, there is no direct endpoint, but I think this endpoint is important enough to leave this
+                'fetchTicker': false, // Can be emulated on fetchTickers if necessary
                 'fetchTickers': true,
                 'fetchTrades': true,
+                'fetchTradingFees': false,
                 'fetchBalance': true,
                 'createOrder': true,
                 'cancelOrder': true,
@@ -67,10 +65,9 @@ module.exports = class tuxexchange extends Exchange {
     }
 
     async fetchMarkets (params = {}) {
-        const tickerRes = await this.publicGet ({ 'method': 'getticker' });
-        const tickersData = this.parseJson (tickerRes);
-        const coinRes = await this.publicGet ({ 'method': 'getcoins' });
-        const coinResponse = this.parseJson (coinRes);
+        const tickersData = await this.publicGet ({ 'method': 'getticker' });
+        // Would prefer not to make two API calls, but this is the only way to get fees for the market
+        const coinResponse = await this.publicGet ({ 'method': 'getcoins' });
         const tickerIds = Object.keys (tickersData);
         let result = [];
         for (let i = 0; i < tickerIds.length; i++) {
@@ -93,9 +90,7 @@ module.exports = class tuxexchange extends Exchange {
                 'active': active,
                 'maker': coinData['makerfee'],
                 'taker': coinData['takerfee'],
-                // precision: precision, // TODO: not listed? infer?
                 'info': tickerData,
-                // limits: limits,
             };
             result.push (market);
         }
@@ -103,8 +98,7 @@ module.exports = class tuxexchange extends Exchange {
     }
 
     async fetchCurrencies (params = {}) {
-        const res = await this.publicGet ({ 'method': 'getcoins' });
-        const currenciesData = this.parseJson (res);
+        const currenciesData = await this.publicGet ({ 'method': 'getcoins' });
         const currencyIds = Object.keys (currenciesData);
         // The API does not expose BTC as a coin (I suspect because it is the base in each market)
         let result = { 'BTC': {
@@ -132,35 +126,9 @@ module.exports = class tuxexchange extends Exchange {
         return result;
     }
 
-    fetchTradingFees (params = {}) {
-        return {
-            'maker': 0,
-            'taker': 0.03,
-        };
-    }
-
-    async fetchTicker (symbol, params = {}) {
-        if (symbol === undefined) {
-            throw new ArgumentsRequired (this.id + ' fetchTicker () requires a "symbol" argument');
-        }
-        let res = await this.publicGet ({ 'method': 'getticker' });
-        const tickersData = this.parseJson (res);
-        const tickerIds = Object.keys (tickersData);
-        for (let i = 0; i < tickerIds.length; i++) {
-            const id = tickerIds[i];
-            const tickerResult = this.parseTicker (id, tickersData[id]);
-            const tickerSymbol = tickerResult['symbol'];
-            if (tickerSymbol === symbol) {
-                return tickerResult;
-            }
-        }
-        throw new BadRequest (this.id + ' no ticker found for symbol provided');
-    }
-
     async fetchTickers (symbols = undefined, params = {}) {
         await this.loadMarkets ();
-        let res = await this.publicGet ({ 'method': 'getticker' });
-        const tickersData = this.parseJson (res);
+        let tickersData = await this.publicGet (this.extend ({ 'method': 'getticker' }, params));
         const tickerIds = Object.keys (tickersData);
         const result = {};
         for (let i = 0; i < tickerIds.length; i++) {
@@ -173,9 +141,8 @@ module.exports = class tuxexchange extends Exchange {
     }
 
     parseTicker (marketId, tickerData) {
-        const timestamp = this.nonce (); // TODO: hopefully this approximation is sufficient
+        const timestamp = this.milliseconds ();
         const market = this.findMarket (marketId);
-        // ALGO: all the values here check out, but there are a lot of undefineds
         return {
             'symbol': market['symbol'],
             'timestamp': timestamp,
@@ -210,14 +177,14 @@ module.exports = class tuxexchange extends Exchange {
             throw new NotSupported (this.id + ' this exchange only trades on symbols with BTC as base');
         }
         if (limit !== undefined) {
+            // At some point it would be worthwhile to extend the base parseOrderBook to include a limit
             throw new NotSupported (this.id + ' fetchOrderBook () does not support a "limit" argument for this exchange');
         }
         let orderBookRequest = {
             'coin': this.currencyId (codes.quote),
             'method': 'getorders',
         };
-        const response = await this.publicGet (orderBookRequest);
-        const orderBook = this.parseJson (response);
+        const orderBook = await this.publicGet (this.extend (orderBookRequest, params));
         const result = this.parseOrderBook (orderBook);
         return result;
     }
@@ -280,8 +247,7 @@ module.exports = class tuxexchange extends Exchange {
             'start': Math.floor (since / 1000),
             'end': this.seconds (),
         };
-        const resp = await this.publicGet (tradeHistoryRequest);
-        const trades = this.parseJson (resp);
+        const trades = await this.publicGet (this.extend (tradeHistoryRequest, params));
         const market = this.getMarket (symbol);
         const results = this.parseTrades (trades, market, since, limit);
         return results;
@@ -289,8 +255,7 @@ module.exports = class tuxexchange extends Exchange {
 
     async fetchBalance (params = {}) {
         await this.loadMarkets ();
-        let res = await this.privatePost ({ 'method': 'getmybalances' });
-        const balancesData = this.parseJson (res);
+        const balancesData = await this.privatePost (this.extend ({ 'method': 'getmybalances' }, params));
         const currencies = Object.keys (balancesData);
         let result = { 'info': balancesData };
         for (let i = 0; i < currencies.length; i++) {
@@ -315,12 +280,12 @@ module.exports = class tuxexchange extends Exchange {
             throw new ArgumentsRequired (this.id + ' createOrder () requires a "price" argument');
         }
         if (type !== 'limit') {
-            throw new NotSupported (this.id + ' fetchTrades () does not support a "limit" argument for this exchange');
+            throw new NotSupported (this.id + ' createOrder () only supports a "limit" argument for this exchange');
         }
-        if (side !== 'buy' || side !== 'sell') {
+        if (side !== 'buy' && side !== 'sell') {
             throw new BadRequest (this.id + ' "side" must be a string containing either "buy" or "sell"');
         }
-        await this.loadMarkets (); // TODO: needed everywhere?
+        await this.loadMarkets ();
         const codes = this.getIdsFromSymbol (symbol);
         amount = this.amountToPrecision (symbol, amount);
         let orderRequest = {
@@ -329,6 +294,7 @@ module.exports = class tuxexchange extends Exchange {
             'amount': amount,
             'price': price,
         };
+        orderRequest = this.extend (orderRequest, params)
         orderRequest['price'] = this.priceToPrecision (symbol, price);
         if (side === 'buy') {
             orderRequest = this.extend (orderRequest, { 'method': 'buy' });
@@ -369,7 +335,7 @@ module.exports = class tuxexchange extends Exchange {
             'id': id,
             'market': this.currencyId (ids.base),
         };
-        const result = await this.privatePost (cancelRequest);
+        const result = await this.privatePost (this.extend (cancelRequest, params));
         return { 'info': result };
     }
 
@@ -398,9 +364,8 @@ module.exports = class tuxexchange extends Exchange {
 
     async fetchOpenOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
-        const openOrdersResp = await this.privatePost ({ 'method': 'getmyopenorders' });
-        const openOrderMap = this.parseJson (openOrdersResp);
-        const openOrders = this.values (openOrderMap);
+        const openOrdersMap = await this.privatePost (this.extend ({ 'method': 'getmyopenorders' }, params));
+        const openOrders = this.values (openOrdersMap);
         let market = undefined;
         if (symbol !== undefined) {
             market = this.getMarket (symbol);
@@ -410,8 +375,7 @@ module.exports = class tuxexchange extends Exchange {
     }
 
     async fetchMyTrades (symbol = undefined, since = undefined, limit = undefined, params = {}) {
-        const tradeHistoryResp = await this.privatePost ({ 'method': 'getmytradehistory' });
-        const myTrades = this.parseJson (tradeHistoryResp);
+        const myTrades = await this.privatePost (this.extend ({ 'method': 'getmytradehistory' }, params));
         let results = this.parseTrades (myTrades, symbol, since, limit);
         return results;
     }
@@ -421,9 +385,8 @@ module.exports = class tuxexchange extends Exchange {
             throw new ArgumentsRequired (this.id + ' fetchDepositAddress () requires a code argument');
         }
         await this.loadMarkets ();
-        const addressesResp = await this.privatePost ({ 'method': 'getmyaddresses' });
-        const addressesJson = this.parseJson (addressesResp);
-        const addresses = addressesJson['addresses'];
+        const addressesData = await this.privatePost (this.extend ({ 'method': 'getmyaddresses' }, params));
+        const addresses = addressesData['addresses'];
         const addressForCode = addresses[this.currencyId (code)];
         return {
             'currency': code,
@@ -456,8 +419,7 @@ module.exports = class tuxexchange extends Exchange {
 
     async fetchDeposits (code = undefined, since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
-        let res = await this.privatePost ({ 'method': 'getmydeposithistory' });
-        const deposits = this.parseJson (res);
+        const deposits = await this.privatePost (this.extend ({ 'method': 'getmydeposithistory' }, params));
         // Some deposits seem to have no data associated
         const validDeposits = [];
         for (let i = 0; i < deposits.length; i++) {
@@ -472,8 +434,7 @@ module.exports = class tuxexchange extends Exchange {
 
     async fetchWithdrawals (code = undefined, since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
-        let res = await this.privatePost ({ 'method': 'getmywithdrawhistory' });
-        const withdrawals = this.parseJson (res);
+        let withdrawals = await this.privatePost (this.extend ({ 'method': 'getmywithdrawhistory' }, params));
         // Some withdrawals seem to have no data associated
         const validWithdrawals = [];
         for (let i = 0; i < withdrawals.length; i++) {
@@ -493,18 +454,20 @@ module.exports = class tuxexchange extends Exchange {
         if (address.indexOf ('0x') === 0) {
             address = address.substr (2);
         }
+        this.checkAddress (address);
         const withdrawRequest = {
             'method': 'withdraw',
             'coin': this.currencyId (code),
             'address': address,
             'amount': amount,
         };
-        const result = await this.privatePost (withdrawRequest);
+        const result = await this.privatePost (this.extend (withdrawRequest, params));
         return { 'info': result };
     }
 
     nonce () {
-        return this.seconds ();
+        // The tuxexchange api actually ignores nonce in practice (even though it is documented)
+        return this.milliseconds ();
     }
 
     sign (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
@@ -546,10 +509,9 @@ module.exports = class tuxexchange extends Exchange {
             // Haven't seen any body-less responses from tux, but best to not explode if that changes
             return;
         }
-        const parsedBody = this.parseJson (body);
         // Response code is always 200, errors will have specific exceptions
-        if (parsedBody['success'] === 0) {
-            const errorBody = parsedBody['error'];
+        if (body['success'] === 0) {
+            const errorBody = body['error'];
             // Exceptions are not ennumerated in tux documentation so just identify ones found in development
             if (errorBody === 'Authentication failed.' || errorBody === 'Invalid public key.') {
                 throw new AuthenticationError (this.id + ' ' + body);
