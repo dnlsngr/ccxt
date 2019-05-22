@@ -294,7 +294,7 @@ module.exports = class tuxexchange extends Exchange {
             'amount': amount,
             'price': price,
         };
-        orderRequest = this.extend (orderRequest, params)
+        orderRequest = this.extend (orderRequest, params);
         orderRequest['price'] = this.priceToPrecision (symbol, price);
         if (side === 'buy') {
             orderRequest = this.extend (orderRequest, { 'method': 'buy' });
