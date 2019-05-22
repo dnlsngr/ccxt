@@ -78,7 +78,7 @@ module.exports = class tuxexchange extends Exchange {
             const quoteId = splitId[1]; // quote
             const base = this.commonCurrencyCode (baseId);
             const quote = this.commonCurrencyCode (quoteId);
-            const active = tickerData.isFrozen === 0;
+            const active = this.safeInteger (tickerData, 'isFrozen') === 0;
             const coinData = coinResponse[quoteId];
             const market = {
                 'id': id,
@@ -88,8 +88,8 @@ module.exports = class tuxexchange extends Exchange {
                 'baseId': baseId,
                 'quoteId': quoteId,
                 'active': active,
-                'maker': coinData['makerfee'],
-                'taker': coinData['takerfee'],
+                'maker': this.safeString (coinData, 'makerfee'),
+                'taker': this.safeString (coinData, 'takerfee'),
                 'info': tickerData,
             };
             result.push (market);
@@ -128,7 +128,7 @@ module.exports = class tuxexchange extends Exchange {
 
     async fetchTickers (symbols = undefined, params = {}) {
         await this.loadMarkets ();
-        let tickersData = await this.publicGet (this.extend ({ 'method': 'getticker' }, params));
+        const tickersData = await this.publicGet (this.extend ({ 'method': 'getticker' }, params));
         const tickerIds = Object.keys (tickersData);
         const result = {};
         for (let i = 0; i < tickerIds.length; i++) {
@@ -173,7 +173,7 @@ module.exports = class tuxexchange extends Exchange {
         }
         await this.loadMarkets ();
         const codes = this.getIdsFromSymbol (symbol);
-        if (codes.base !== 'BTC') {
+        if (codes['base'] !== 'BTC') {
             throw new NotSupported (this.id + ' this exchange only trades on symbols with BTC as base');
         }
         if (limit !== undefined) {
@@ -181,7 +181,7 @@ module.exports = class tuxexchange extends Exchange {
             throw new NotSupported (this.id + ' fetchOrderBook () does not support a "limit" argument for this exchange');
         }
         let orderBookRequest = {
-            'coin': this.currencyId (codes.quote),
+            'coin': this.currencyId (codes['quote']),
             'method': 'getorders',
         };
         const orderBook = await this.publicGet (this.extend (orderBookRequest, params));
@@ -214,7 +214,7 @@ module.exports = class tuxexchange extends Exchange {
         };
         if (isPrivateTrade) {
             let feeCurrency = undefined;
-            if (parsedTrade.side === 'buy') {
+            if (parsedTrade['side'] === 'buy') {
                 feeCurrency = this.commonCurrencyCode (this.safeString (trade, 'market'));
             } else {
                 feeCurrency = this.commonCurrencyCode (this.safeString (trade, 'coin'));
@@ -243,12 +243,15 @@ module.exports = class tuxexchange extends Exchange {
         }
         let tradeHistoryRequest = {
             'method': 'gettradehistory',
-            'coin': this.currencyId (codes.quote),
-            'start': Math.floor (since / 1000),
+            'coin': this.currencyId (codes['quote']),
             'end': this.seconds (),
         };
+        if (since !== undefined) {
+            const sinceSeconds = since / 1000;
+            this.extend (tradeHistoryRequest, { 'start': sinceSeconds });
+        }
         const trades = await this.publicGet (this.extend (tradeHistoryRequest, params));
-        const market = this.getMarket (symbol);
+        const market = this.market (symbol);
         const results = this.parseTrades (trades, market, since, limit);
         return results;
     }
@@ -289,8 +292,8 @@ module.exports = class tuxexchange extends Exchange {
         const codes = this.getIdsFromSymbol (symbol);
         amount = this.amountToPrecision (symbol, amount);
         let orderRequest = {
-            'market': this.currencyId (codes.base),
-            'coin': this.currencyId (codes.quote),
+            'market': this.currencyId (codes['base']),
+            'coin': this.currencyId (codes['quote']),
             'amount': amount,
             'price': price,
         };
@@ -329,11 +332,11 @@ module.exports = class tuxexchange extends Exchange {
             throw new ArgumentsRequired (this.id + ' cancelOrder () requires a "symbol" argument');
         }
         await this.loadMarkets ();
-        const ids = this.getIdsFromSymbol (symbol);
+        const codes = this.getIdsFromSymbol (symbol);
         const cancelRequest = {
             'method': 'cancelorder',
             'id': id,
-            'market': this.currencyId (ids.base),
+            'market': this.currencyId (codes['base']),
         };
         const result = await this.privatePost (this.extend (cancelRequest, params));
         return { 'info': result };
@@ -368,7 +371,7 @@ module.exports = class tuxexchange extends Exchange {
         const openOrders = this.values (openOrdersMap);
         let market = undefined;
         if (symbol !== undefined) {
-            market = this.getMarket (symbol);
+            market = this.market (symbol);
         }
         const result = this.parseOrders (openOrders, market, since, limit);
         return result;
@@ -376,7 +379,7 @@ module.exports = class tuxexchange extends Exchange {
 
     async fetchMyTrades (symbol = undefined, since = undefined, limit = undefined, params = {}) {
         const myTrades = await this.privatePost (this.extend ({ 'method': 'getmytradehistory' }, params));
-        let results = this.parseTrades (myTrades, symbol, since, limit);
+        const results = this.parseTrades (myTrades, symbol, since, limit);
         return results;
     }
 
@@ -434,7 +437,7 @@ module.exports = class tuxexchange extends Exchange {
 
     async fetchWithdrawals (code = undefined, since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
-        let withdrawals = await this.privatePost (this.extend ({ 'method': 'getmywithdrawhistory' }, params));
+        const withdrawals = await this.privatePost (this.extend ({ 'method': 'getmywithdrawhistory' }, params));
         // Some withdrawals seem to have no data associated
         const validWithdrawals = [];
         for (let i = 0; i < withdrawals.length; i++) {
