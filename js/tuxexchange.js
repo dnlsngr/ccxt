@@ -510,11 +510,12 @@ module.exports = class tuxexchange extends Exchange {
             return;
         }
         // Response code is always 200, errors will have specific exceptions
-        if (body['success'] === 0) {
-            const errorBody = body['error'];
+        const success = this.safeInteger (response, 'success', 1);
+        if (success === 0) {
+            const errorBody = this.safeString (response, 'error');
             // Exceptions are not ennumerated in tux documentation so just identify ones found in development
             if (errorBody === 'Authentication failed.' || errorBody === 'Invalid public key.') {
-                throw new AuthenticationError (this.id + ' ' + body);
+                throw new AuthenticationError (this.id + ' ' + errorBody);
             } else if (errorBody === 'Order not found.') {
                 throw new OrderNotFound (this.id + ' no order found. Check that the order id and the base currency of the symbol are correct');
             } else if (errorBody === 'Inssuficient funds.' || errorBody === 'NSF.') {

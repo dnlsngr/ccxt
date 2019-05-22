@@ -493,7 +493,7 @@ class Exchange(object):
                 timeout=int(self.timeout / 1000),
                 proxies=self.proxies
             )
-            http_response = response.text
+            http_response = response.text.strip()
             json_response = self.parse_json(http_response) if self.is_json_encoded_object(http_response) else None
             headers = response.headers
             # FIXME remove last_x_responses from subclasses
@@ -560,7 +560,6 @@ class Exchange(object):
     def parse_json(self, http_response):
         try:
             if Exchange.is_json_encoded_object(http_response):
-                http_response.trim()
                 return json.loads(http_response)
         except ValueError:  # superclass of JsonDecodeError (python2)
             pass
